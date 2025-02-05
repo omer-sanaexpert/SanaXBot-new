@@ -7,7 +7,7 @@
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <style>
         body {
-            font-family: Arial, sans-serif;
+            font-family: 'Arial', sans-serif;
             background-color: #f4f4f4;
             display: flex;
             justify-content: center;
@@ -19,8 +19,8 @@
             width: 400px;
             height: 600px;
             background-color: #fff;
-            border-radius: 8px;
-            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
             display: flex;
             flex-direction: column;
             overflow: hidden;
@@ -28,48 +28,69 @@
         .chat-header {
             background-color: #0d8500;
             color: #fff;
-            padding: 10px;
+            padding: 15px;
             text-align: center;
-            font-size: 18px;
+            font-size: 15px;
+            
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
         }
         .chat-messages {
             flex: 1;
-            padding: 10px;
+            padding: 15px;
             overflow-y: auto;
             border-bottom: 1px solid #ddd;
+            background-color: #f9f9f9;
         }
         .message {
-            margin-bottom: 10px;
-            padding: 8px 12px;
-            border-radius: 5px;
+            margin-bottom: 15px;
+            padding: 10px 15px;
+            border-radius: 12px;
             max-width: 70%;
+            position: relative;
+            animation: fadeIn 0.3s ease-in-out;
         }
         .message.user {
             background-color: #0d8500;
             color: #fff;
             align-self: flex-end;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
         }
         .message.bot {
-            background-color: #f1f1f1;
+            background-color: #fff;
             color: #333;
             align-self: flex-start;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
         }
         .chat-input {
             display: flex;
             border-top: 1px solid #ddd;
+            background-color: #fff;
+            padding: 10px;
         }
         .chat-input input {
             flex: 1;
             padding: 10px;
-            border: none;
+            border: 1px solid #ddd;
+            border-radius: 8px;
             outline: none;
+            font-size: 14px;
+            transition: border-color 0.3s ease;
+        }
+        .chat-input input:focus {
+            border-color: #0d8500;
+        }
+        .chat-input input::placeholder {
+            color: #999;
         }
         .chat-input button {
             padding: 10px 20px;
             background-color: #0d8500;
             color: #fff;
             border: none;
+            border-radius: 8px;
             cursor: pointer;
+            margin-left: 10px;
+            transition: background-color 0.3s ease;
         }
         .chat-input button:hover {
             background-color: #086400;
@@ -78,31 +99,40 @@
         /* Link Preview */
         .link-preview {
             display: flex;
-            flex-direction: row;
+            align-items: center;
+            text-decoration: none;
             border: 1px solid #ddd;
-            border-radius: 5px;
-            margin-top: 5px;
-            cursor: pointer;
-            overflow: hidden;
+            border-radius: 8px;
+            padding: 8px;
+            margin-top: 10px;
             background: #fff;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .link-preview:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
         }
         .link-preview img {
-            width: 80px;
-            height: 80px;
-            object-fit: cover;
-        }
-        .link-preview div {
-            padding: 8px;
-            flex: 1;
+            width: 50px;
+            height: 50px;
+            border-radius: 5px;
+            margin-right: 10px;
         }
         .link-preview .title {
             font-weight: bold;
+            font-size: 14px;
             color: #333;
         }
         .link-preview .description {
             font-size: 12px;
             color: #666;
+        }
+        .source {
+            font-size: 10px;
+            color: #666;
             margin-top: 5px;
+            font-style: italic;
+            text-align: right;
         }
 
         /* Popup */
@@ -116,8 +146,8 @@
             max-width: 400px;
             background: white;
             padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
             text-align: center;
             z-index: 1000;
         }
@@ -125,6 +155,7 @@
             width: 100%;
             height: 300px;
             border: none;
+            border-radius: 8px;
         }
         .popup-close {
             display: block;
@@ -133,8 +164,9 @@
             background: #0d8500;
             color: white;
             border: none;
-            border-radius: 5px;
+            border-radius: 8px;
             cursor: pointer;
+            transition: background-color 0.3s ease;
         }
         .popup-close:hover {
             background: #086400;
@@ -149,44 +181,20 @@
             background: rgba(0, 0, 0, 0.5);
             z-index: 999;
         }
-        .link-preview {
-    display: flex;
-    align-items: center;
-    text-decoration: none;
-    border: 1px solid #ddd;
-    border-radius: 8px;
-    padding: 8px;
-    margin-top: 5px;
-    background: #fff;
-    transition: 0.3s;
-}
-.link-preview:hover {
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-}
-.link-preview img {
-    width: 50px;
-    height: 50px;
-    border-radius: 5px;
-    margin-right: 10px;
-}
-.link-preview .title {
-    font-weight: bold;
-    font-size: 14px;
-    color: #333;
-}
-.link-preview .description {
-    font-size: 12px;
-    color: #666;
-}
 
-
+        /* Animations */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
     </style>
 </head>
 <body>
+    
     <div class="chat-container">
         <div class="chat-header">
             <img src="https://lps.sanaexpert.de/wp-content/uploads/2022/07/sanaexpert_white.png" alt="SanaExpert Logo" style="height: 30px; vertical-align: middle;">
-            Customer Service AI Agent
+            AI Agent
         </div>
         <div class="chat-messages" id="chat-messages"></div>
         <div class="chat-input">
@@ -207,9 +215,10 @@
             let userId = localStorage.getItem('user_id') || `user_${Math.floor(Math.random() * 100000)}`;
             localStorage.setItem('user_id', userId);
     
-            function appendMessage(sender, message) {
+            function appendMessage(sender, message, source) {
                 message = convertLinksToPreviews(message);
-                let messageElement = `<div class="message ${sender}">${message}</div>`;
+                let sourceElement = source ? `<div class="source">Generated by AI</div>` : '';
+                let messageElement = `<div class="message ${sender}">${message}${sourceElement}</div>`;
                 $('#chat-messages').append(messageElement);
                 $('.chat-messages').scrollTop($('.chat-messages')[0].scrollHeight);
             }
@@ -241,7 +250,7 @@
                     data: JSON.stringify({ user_id: userId, message: message }),
                     success: function (data) {
                         if (data.response) {
-                            appendMessage('bot', data.response);
+                            appendMessage('bot', data.response, data.source);
                         }
                     },
                     error: function () {
@@ -257,8 +266,16 @@
             });
         });
     </script>
-    
-    
-    
+    <script>
+        $(document).ready(function () {
+            $("#chat-toggle").click(function () {
+                $("#chat-popup").toggle();
+            });
+            
+            $("#close-chat").click(function () {
+                $("#chat-popup").hide();
+            });
+        });
+    </script>
 </body>
 </html>

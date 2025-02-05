@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_from_directory
+from fastapi import FastAPI, Depends, HTTPException, Body
 from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableLambda
 from langgraph.prebuilt import ToolNode
@@ -24,47 +24,47 @@ from requests.auth import HTTPBasicAuth
 import json
 from bs4 import BeautifulSoup
 import re
-
+from langchain_core.output_parsers import StrOutputParser
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 
 
 # Load environment variables
 load_dotenv()
 
-# Store user conversations separately
+# Initialize FastAPI app
+app = FastAPI()
+
+# In-memory storage for user conversations
 user_conversations = {}
 
 # Endpoint URL
 url = os.environ.get("SCL_URL")
-
-# Basic Authentication credentials
 username = os.environ.get("SCL_USERNAME")
 password = os.environ.get("SCL_PASSWORD")
 shipping_url = os.environ.get("SHIPMENT_TRACKING_URL")
 
-# Initialize Flask app
-app = Flask(__name__)
-
 # Initialize Pinecone
 pc = Pinecone(api_key=os.environ.get("PINECONE_API_KEY"))
-
-# Create or connect to a Pinecone index
 index_name = "rag-pinecone-labse"
+
 if index_name not in pc.list_indexes().names():
     pc.create_index(
         name=index_name,
-        dimension=768,  # LaBSE embeddings are 768-dimensional
-        metric="cosine",  # Use cosine similarity for text embeddings
-        spec=ServerlessSpec(
-            cloud="aws",
-            region="us-east-1"
-        )
+        dimension=768,
+        metric="cosine",
+        spec=ServerlessSpec(cloud="aws", region="us-east-1")
     )
 
-# Connect to the index
 pinecone_index = pc.Index(index_name)
 
 # Load the LaBSE model
 embedding_model = SentenceTransformer('sentence-transformers/LaBSE')
+
+# Define the State class
+class State(TypedDict):
+    messages: Annotated[List[AnyMessage], add_messages]
 
 # Enhanced tool definitions
 @tool
@@ -99,11 +99,65 @@ def order_information(order_id: str) -> str:
     return f"Order {order_id} , details: {response.json()}  , shippment_tracking_url: {shipping_url}"
 
 @tool
+def voucher_information() -> str:
+    """Retrieve voucher related information."""
+    print("voucher_information")
+    # JSON body
+    payload = {
+        "action": "getCurrentShopifyVoucherCodes",
+    }
+
+    # Headers
+    headers = {
+        "Content-Type": "application/json"
+    }
+
+    # Send POST request
+    response = requests.post(
+        url,
+        headers=headers,
+        auth=HTTPBasicAuth(username, password),
+        data=json.dumps(payload)
+    )
+
+    # Print response
+    print(response.status_code)
+    print(response.json())
+
+
+
+    return f" Voucher Information : {response.json()} "
+
+
+@tool
 def product_information() -> str:
     """Retrieve pricing information for the product."""
     print("product_information")
-    products = pd.read_csv("product_information1.csv")
-    return products.to_string() + "\n\n ."
+    # JSON body
+    payload = {
+        "action": "getCurrentShopifyPrices",
+    }
+
+    # Headers
+    headers = {
+        "Content-Type": "application/json"
+    }
+
+    # Send POST request
+    response = requests.post(
+        url,
+        headers=headers,
+        auth=HTTPBasicAuth(username, password),
+        data=json.dumps(payload)
+    )
+
+    # Print response
+    print(response.status_code)
+    print(response.json())
+
+
+
+    return f" Voucher Information : {response.json()} "
 
 @tool
 def escalate_to_human(name: str, email: str) -> str:
@@ -162,11 +216,6 @@ def _print_event(event: dict, _printed: set, max_length=1500):
             print(msg_repr)
             _printed.add(message.id)
 
-
-# Define the State class
-class State(TypedDict):
-    messages: Annotated[List[AnyMessage], add_messages]
-
 # Define the Assistant class
 class Assistant:
     def __init__(self, runnable: Runnable):
@@ -191,11 +240,42 @@ class Assistant:
                 break
         return {"messages": result}
 
-# Initialize the LLM and tools
+# Question rewriter
+websystem = """You are a question re-writer that converts an input question to a better version optimized for web search."""
+re_write_prompt = ChatPromptTemplate.from_messages([
+    ("system", websystem),
+    ("human", "Here is the initial question:\n\n{question}\nFormulate an improved question."),
+])
 llm = ChatAnthropic(model="claude-3-5-sonnet-20241022", temperature=1)
-web_search_tool = TavilySearchResults(k=3, include_domains=["https://sanaexpert.es/"])
-part_1_tools = [web_search_tool, order_information, product_information, knowledgebase_sanaexpert, escalate_to_human]
+question_rewriter = re_write_prompt | llm | StrOutputParser()
 
+# Web search tool
+web_search_tool = TavilySearchResults(k=3, include_domains=["https://sanaexpert.es/"])
+
+@tool
+def web_search(query: str) -> str:
+    """
+    Perform a web search based on the given query.
+
+    Args:
+        query (str): The query for the web search.
+
+    Returns:
+        str: A string containing the search results.
+    """
+    print("web search")
+    rewritten_query = question_rewriter.invoke({"question": query}) or ""
+    
+    # Perform web search
+    docs = web_search_tool.invoke({"query": rewritten_query}) or []
+
+    return docs
+
+
+# Tools list
+part_1_tools = [order_information, product_information, knowledgebase_sanaexpert, web_search, escalate_to_human, voucher_information]
+
+# Primary assistant prompt
 # Define the primary assistant prompt
 primary_assistant_prompt = ChatPromptTemplate.from_messages([
     ("system", """ACT LIKE a friendly SanaExpert customer support agent named Maria and respond on behalf of SanaExpert which is a company who deals in food supplements related to maternity, sports, weight control etc. Please Follow these guidelines:
@@ -209,19 +289,20 @@ primary_assistant_prompt = ChatPromptTemplate.from_messages([
    - After 3 failed attempts, or If the query is about returning or refund specific product collect name and email and escalate to human agent.
 4. If the question is about SanaExpert or its products, policies etc get information using SanaExpertKnowledgebase.
 5. For up-to-date product prices and product_url use product_information tool. Remember all prices are in euro and for product restock queries, answer that the product will be back in approx 2 weeks.
-6. Use tools ONLY when specific data is needed.
-7. Maintain professional yet approachable tone.
-8. Clarify ambiguous requests before acting.
-9. Keep your response very brief and concise and ask one thing at a time.
-10. Use tools information only in the background and don't tell it to the customer. If you can't find any info from knowledgebase and other sources you can try web_search_tool.
-11. In Case you are not sure about answer just ask customer for his name and email if not provided before. and then tell the user that you are escalating the ticket to human representation and then call escalate_to_human tool."""),
+6. For voucher related queries use voucher_information tool.
+7. Use tools ONLY when specific data is needed.
+8. Maintain professional yet approachable tone.
+9. Clarify ambiguous requests before acting.
+10. Keep your response very brief and concise and ask one thing at a time.
+11. Use tools information only in the background and don't tell it to the customer. If you can't find any info from knowledgebase and other sources you can try web_search with query.
+12. In Case you are not sure about answer just ask customer for his name and email if not provided before. and then tell the user that you are escalating the ticket to human representation and then call escalate_to_human tool."""),
     ("placeholder", "{messages}"),
 ]).partial(time=datetime.now)
 
-# Build the assistant runnable
+# Build assistant runnable
 part_1_assistant_runnable = primary_assistant_prompt | llm.bind_tools(part_1_tools)
 
-# Build the graph
+# Build graph
 builder = StateGraph(State)
 builder.add_node("assistant", Assistant(part_1_assistant_runnable))
 builder.add_node("tools", create_tool_node_with_fallback(part_1_tools))
@@ -231,58 +312,24 @@ builder.add_edge("tools", "assistant")
 memory = MemorySaver()
 part_1_graph = builder.compile(checkpointer=memory)
 
-# In-memory storage for user conversations
-user_conversations = {}
+# Chat endpoint
+class ChatRequest(BaseModel):
+    user_id: str = Field(..., description="Unique identifier for each user")
+    message: str = Field(..., description="User message")
 
-def fetch_link_metadata(url):
-    """Fetch the title and featured image of a webpage."""
-    print("Fetching metadata for:", url)
-    try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers, timeout=5)
-        if response.status_code != 200:
-            return None
-        
-        soup = BeautifulSoup(response.text, 'html.parser')
-
-        # Extract Open Graph metadata
-        title = soup.find("meta", property="og:title") or soup.find("title")
-        image = soup.find("meta", property="og:image")
-
-        title_text = title["content"] if title and title.has_attr("content") else title.get_text() if title else url
-        image_url = image["content"] if image and image.has_attr("content") else None
-
-        return {"title": title_text, "image": image_url, "url": url}
-    except Exception as e:
-        print("Error fetching metadata:", e)
-        return None
-
-
-@app.route('/chat', methods=['POST'])
-def chat():
-    data = request.json
-    user_id = data.get('user_id')  # Unique identifier for each user
-    user_message = data.get('message')
+@app.post("/chat")
+async def chat(request_data: ChatRequest):
+    user_id = request_data.user_id
+    user_message = request_data.message
 
     if not user_id or not user_message:
-        return jsonify({"error": "Both user_id and message are required"}), 400
+        raise HTTPException(status_code=400, detail="Both user_id and message are required")
 
-    # Retrieve or create a new conversation for the user
     if user_id not in user_conversations:
         user_conversations[user_id] = {
             "thread_id": str(uuid.uuid4()),
             "history": []
         }
-
-    url_regex = r'(https?:\/\/[^\s.,!?()"\'\]]+)'
-    urls = re.findall(url_regex, user_message)
-
-    link_previews = []
-    for url in urls:
-        print("URL detected:", url)
-        metadata = fetch_link_metadata(url)
-        if metadata:
-            link_previews.append(metadata)
 
     thread_id = user_conversations[user_id]["thread_id"]
     config = {
@@ -292,20 +339,17 @@ def chat():
         }
     }
 
-    # Append user message to conversation history
     user_conversations[user_id]["history"].append(f"\U0001F9D1\u200D\U0001F4BB You: {user_message}")
 
-    # Fetch response from assistant
     try:
         events = part_1_graph.stream(
             {"messages": [("user", user_message)]}, config, stream_mode="values"
         )
     except Exception as e:
-        return jsonify({"error": f"Failed to fetch AI response: {str(e)}"}), 500
+        raise HTTPException(status_code=500, detail=f"Failed to fetch AI response: {str(e)}")
 
     last_assistant_response = ""
     raw_events = list(events)
-
     for event in raw_events:
         if "messages" in event:
             for message in event["messages"]:
@@ -316,28 +360,12 @@ def chat():
                     elif isinstance(content, list):
                         content = " ".join(str(part) for part in content)
                     elif isinstance(content, str):
-                        if "<function=" in content:
-                            content = "Your issue has been escalated to a human representative for further assistance."
-                    else:
-                        continue
-                    last_assistant_response = content.strip()
+                        last_assistant_response = content
 
-    assistant_response = last_assistant_response or "[No response]"
-
-    # Append assistant response to conversation history
-    user_conversations[user_id]["history"].append(f"\U0001F916 SanaExpert Agent: {assistant_response}")
-
-    return jsonify({
-        "response": assistant_response,
-        "conversation_history": user_conversations[user_id]["history"],
-        "link_previews": link_previews
-    })
+    return {"response": last_assistant_response}
 
 
-@app.route('/')
+@app.get("/")
 def index():
-    return send_from_directory('.', 'index.html')
-
-# Run the Flask app
-if __name__ == '__main__':
-    app.run(debug=True)
+    # Serve the index.html file from the current directory
+    return FileResponse("index.html", media_type="text/html")
