@@ -59,8 +59,23 @@ if index_name not in pc.list_indexes().names():
 
 pinecone_index = pc.Index(index_name)
 
+product_index_name = "rag-pinecone-labse"
+
+if index_name not in pc.list_indexes().names():
+    pc.create_index(
+        name=index_name,
+        dimension=768,
+        metric="cosine",
+        spec=ServerlessSpec(cloud="aws", region="us-east-1")
+    )
+
+product_index = pc.Index(index_name)
+
 # Load the LaBSE model
 embedding_model = SentenceTransformer('sentence-transformers/LaBSE')
+
+
+# generate and store the embeddings for the products
 
 # Define the State class
 class State(TypedDict):
@@ -130,8 +145,8 @@ def voucher_information() -> str:
 
 
 @tool
-def product_information() -> str:
-    """Retrieve pricing information for the product."""
+def product_information(product_name: str) -> str:
+    """Retrieve pricing information for the product by product_name (mandantory)."""
     print("product_information")
     # JSON body
     payload = {
@@ -151,13 +166,23 @@ def product_information() -> str:
         data=json.dumps(payload)
     )
 
+    #retrive the sku from the rag
+    df_products = pd.read_csv("product.csv", encoding='unicode_escape')
+    sku = df_products[df_products["product_name"] == product_name]["sku"].values[0]
+    product_url = df_products[df_products["product_name"] == product_name]["product_url"].values[0]
+    #send back the product information for that sku along with url.
+
+    product_information = response.json().get(sku, "Product not found")
+
+    product_information["product_url"] = product_url
+
     # Print response
     print(response.status_code)
-    print(response.json())
+    print(product_information)
 
 
 
-    return f" Voucher Information : {response.json()} "
+    return f" Product Information : {product_information} "
 
 @tool
 def escalate_to_human(name: str, email: str) -> str:
@@ -288,7 +313,7 @@ primary_assistant_prompt = ChatPromptTemplate.from_messages([
    - Only provide information about that specific order.
    - After 3 failed attempts, or If the query is about returning or refund specific product collect name and email and escalate to human agent.
 4. If the question is about SanaExpert or its products, policies etc get information using SanaExpertKnowledgebase.
-5. For up-to-date product prices and product_url use product_information tool. Remember all prices are in euro and for product restock queries, answer that the product will be back in approx 2 weeks.
+5. For up-to-date product prices and product_url use product_information tool by passing it product_name. Remember all prices are in euro and for product restock queries, answer that the product will be back in approx 2 weeks.
 6. For voucher related queries use voucher_information tool.
 7. Use tools ONLY when specific data is needed.
 8. Maintain professional yet approachable tone.
