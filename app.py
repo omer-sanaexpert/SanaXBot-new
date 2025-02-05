@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException, Body
 from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableLambda
+from langchain_groq import ChatGroq
 from langgraph.prebuilt import ToolNode
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain_anthropic import ChatAnthropic
@@ -28,6 +29,7 @@ from langchain_core.output_parsers import StrOutputParser
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+from typing import Dict, Any, List
 
 
 # Load environment variables
@@ -75,29 +77,32 @@ product_index = pc.Index(index_name)
 embedding_model = SentenceTransformer('sentence-transformers/LaBSE')
 
 
-# generate and store the embeddings for the products
+# generate and store the embeddings for the knowledgebase
 
 # Define the State class
 class State(TypedDict):
     messages: Annotated[List[AnyMessage], add_messages]
 
-# Enhanced tool definitions
 @tool
-def order_information(order_id: str) -> str:
-    """Retrieve order and shipping details by order ID and postal code."""
-    print("order_information")
-    # JSON body
+def get_order_information(order_id: str) -> Dict[str, Any]:
+    """Retrieve order and shipping details by order ID.
+
+    Args:
+        order_id (str): The unique identifier for the order.
+
+    Returns:
+        Dict[str, Any]: A dictionary containing order details, including shipping information.
+    """
+    print("get_order_information")
     payload = {
         "action": "getOrderInformation",
         "order_id": order_id
     }
 
-    # Headers
     headers = {
         "Content-Type": "application/json"
     }
 
-    # Send POST request
     response = requests.post(
         url,
         headers=headers,
@@ -105,29 +110,27 @@ def order_information(order_id: str) -> str:
         data=json.dumps(payload)
     )
 
-    # Print response
     print(response.status_code)
     print(response.json())
 
-
-
-    return f"Order {order_id} , details: {response.json()}  , shippment_tracking_url: {shipping_url}"
+    return response.json()
 
 @tool
-def voucher_information() -> str:
-    """Retrieve voucher related information."""
-    print("voucher_information")
-    # JSON body
+def get_voucher_information() -> Dict[str, Any]:
+    """Retrieve current voucher codes and related information.
+
+    Returns:
+        Dict[str, Any]: A dictionary containing voucher information.
+    """
+    print("get_voucher_information")
     payload = {
         "action": "getCurrentShopifyVoucherCodes",
     }
 
-    # Headers
     headers = {
         "Content-Type": "application/json"
     }
 
-    # Send POST request
     response = requests.post(
         url,
         headers=headers,
@@ -135,30 +138,27 @@ def voucher_information() -> str:
         data=json.dumps(payload)
     )
 
-    # Print response
     print(response.status_code)
     print(response.json())
 
-
-
-    return f" Voucher Information : {response.json()} "
-
+    return response.json()
 
 @tool
-def product_information(product_name: str) -> str:
-    """Retrieve pricing information for the product by product_name (mandantory)."""
-    print("product_information")
-    # JSON body
+def get_product_pricing() -> Dict[str, Any]:
+    """Retrieve current pricing information for products.
+
+    Returns:
+        Dict[str, Any]: A dictionary containing product pricing information.
+    """
+    print("get_product_pricing")
     payload = {
         "action": "getCurrentShopifyPrices",
     }
 
-    # Headers
     headers = {
         "Content-Type": "application/json"
     }
 
-    # Send POST request
     response = requests.post(
         url,
         headers=headers,
@@ -166,38 +166,57 @@ def product_information(product_name: str) -> str:
         data=json.dumps(payload)
     )
 
-    #retrive the sku from the rag
-    df_products = pd.read_csv("product.csv", encoding='unicode_escape')
-    sku = df_products[df_products["product_name"] == product_name]["sku"].values[0]
-    product_url = df_products[df_products["product_name"] == product_name]["product_url"].values[0]
-    #send back the product information for that sku along with url.
-
-    product_information = response.json().get(sku, "Product not found")
-
-    product_information["product_url"] = product_url
-
-    # Print response
     print(response.status_code)
-    print(product_information)
+    print(response.json())
+
+    return response.json()
+
+@tool
+def get_product_url() -> str:
+    """Retrieve the URL for a given product.
+
+    Returns:
+        str: The URL of the product.
+    """
+    print("get_product_url")
+    
+    df = pd.read_csv('product.csv', delimiter=';', encoding='unicode_escape')
+    df.drop(['sku', 'product_description'], axis=1, inplace=True)
+
+    print(df.to_string())
 
 
-
-    return f" Product Information : {product_information} "
+    return df.to_string() + "\n\n ."
+    
 
 @tool
 def escalate_to_human(name: str, email: str) -> str:
-    """Escalate conversation to human agent. Requires both name and email."""
+    """Escalate the conversation to a human agent.
+
+    Args:
+        name (str): The name of the person requesting escalation.
+        email (str): The email address of the person requesting escalation.
+
+    Returns:
+        str: A confirmation message indicating the ticket has been escalated.
+    """
     print("escalate_to_human", name, email)
-    if(name == "" or email == ""):
+    if not name or not email:
         return "Please provide both your name and email to escalate the ticket."
     return f"Escalated ticket created for {name} ({email})"
 
 @tool
-def knowledgebase_sanaexpert(qq: str) -> str:
-    """SanaExpert Product Information, return, shippment policies and general information etc."""
-    print("knowledgebase_sanaexpert")
-    query_embedding = embedding_model.encode([qq])[0].tolist()
-    print(type(pinecone_index))
+def query_knowledgebase_sanaexpert(q: str) -> str:
+    """Query the SanaExpert knowledge base for product information, return policies, shipment policies, and general information.
+
+    Args:
+        q (str): The query string to search in the knowledge base.
+
+    Returns:
+        str: A concatenated string of the top 3 matching results from the knowledge base.
+    """
+    print("query_knowledgebase_sanaexpert")
+    query_embedding = embedding_model.encode([q])[0].tolist()
     results = pinecone_index.query(
         vector=query_embedding,
         top_k=3,
@@ -272,10 +291,12 @@ re_write_prompt = ChatPromptTemplate.from_messages([
     ("human", "Here is the initial question:\n\n{question}\nFormulate an improved question."),
 ])
 llm = ChatAnthropic(model="claude-3-5-sonnet-20241022", temperature=1)
+
+#llm = ChatGroq(model="llama3-70b-8192", temperature=1)
 question_rewriter = re_write_prompt | llm | StrOutputParser()
 
 # Web search tool
-web_search_tool = TavilySearchResults(k=3, include_domains=["https://sanaexpert.es/"])
+web_search_tool = TavilySearchResults(k=3, search_engine="google")
 
 @tool
 def web_search(query: str) -> str:
@@ -289,16 +310,19 @@ def web_search(query: str) -> str:
         str: A string containing the search results.
     """
     print("web search")
-    rewritten_query = question_rewriter.invoke({"question": query}) or ""
+    rewritten_query = question_rewriter.invoke({"question": query})
+    print(rewritten_query)
     
     # Perform web search
     docs = web_search_tool.invoke({"query": rewritten_query}) or []
 
-    return docs
+    print(docs[0]['content'] if docs else "No results found.")
+
+    return docs[0]['content'] if docs else "No results found."
 
 
 # Tools list
-part_1_tools = [order_information, product_information, knowledgebase_sanaexpert, web_search, escalate_to_human, voucher_information]
+part_1_tools = [get_order_information, get_product_pricing,get_product_url, query_knowledgebase_sanaexpert, escalate_to_human, get_voucher_information]
 
 # Primary assistant prompt
 # Define the primary assistant prompt
@@ -313,13 +337,13 @@ primary_assistant_prompt = ChatPromptTemplate.from_messages([
    - Only provide information about that specific order.
    - After 3 failed attempts, or If the query is about returning or refund specific product collect name and email and escalate to human agent.
 4. If the question is about SanaExpert or its products, policies etc get information using SanaExpertKnowledgebase.
-5. For up-to-date product prices and product_url use product_information tool by passing it product_name. Remember all prices are in euro and for product restock queries, answer that the product will be back in approx 2 weeks.
+5. For up-to-date product prices use product_pricing tool and then for product url of specific product use product_url tool and provide complete url . Remember all prices are in euro and for product restock queries, answer that the product will be back in approx 2 weeks.
 6. For voucher related queries use voucher_information tool.
 7. Use tools ONLY when specific data is needed.
 8. Maintain professional yet approachable tone.
 9. Clarify ambiguous requests before acting.
 10. Keep your response very brief and concise and ask one thing at a time.
-11. Use tools information only in the background and don't tell it to the customer. If you can't find any info from knowledgebase and other sources you can try web_search with query.
+11. Use tools information only in the background and don't tell it to the customer. 
 12. In Case you are not sure about answer just ask customer for his name and email if not provided before. and then tell the user that you are escalating the ticket to human representation and then call escalate_to_human tool."""),
     ("placeholder", "{messages}"),
 ]).partial(time=datetime.now)
