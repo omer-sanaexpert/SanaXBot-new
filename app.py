@@ -74,7 +74,12 @@ if index_name not in pc.list_indexes().names():
 product_index = pc.Index(index_name)
 
 # Load the LaBSE model
-embedding_model = SentenceTransformer('sentence-transformers/LaBSE')
+embedding_model = None
+
+@app.on_event("startup")
+async def load_model():
+    global embedding_model
+    embedding_model = SentenceTransformer('sentence-transformers/LaBSE')
 
 
 # generate and store the embeddings for the knowledgebase
