@@ -5,13 +5,13 @@ langchainhub
 chromadb
 langchain
 langgraph
-langchain_huggingface
-langchain_google_genai
 langchain-anthropic
 tavily-python
 pandas
 openai
-pypdf
 pinecone-client
-Flask
 langchain_core
+fastapi
+uvicorn
+sentence-transformers
+bs4
